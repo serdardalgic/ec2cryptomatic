@@ -5,6 +5,7 @@ import argparse
 import boto3
 import logging
 import sys
+import time
 from botocore.exceptions import ClientError
 from botocore.exceptions import EndpointConnectionError
 
@@ -41,8 +42,8 @@ class EC2Cryptomatic(object):
         self._volume = None
 
         # Waiters
-        self._wait_snapshot = self._ec2_client.get_waiter('snapshot_completed')
         self._wait_volume = self._ec2_client.get_waiter('volume_available')
+        self._SLEEP_DURATION = 15
 
         # Do some pre-check : instances must exists and be stopped
         self._instance_is_exists()
@@ -50,14 +51,14 @@ class EC2Cryptomatic(object):
 
     def _instance_is_exists(self):
         try:
-            self._ec2_client.describe_instances(InstanceIds=[self._instance.id])
+            self._ec2_client.describe_instances(
+                InstanceIds=[self._instance.id])
         except ClientError:
             raise
 
     def _instance_is_stopped(self):
         if self._instance.state['Name'] != 'stopped':
             raise TypeError('Instance still running ! please stop it.')
-
 
     def _start_instance(self):
         try:
@@ -80,7 +81,9 @@ class EC2Cryptomatic(object):
             device.delete()
 
         else:
-            self._logger.info('-->Preserving unencrypted volume %s' % device.id)
+            self._logger.info(
+                '-->Preserving unencrypted volume %s' %
+                device.id)
 
         self._snapshot.delete()
         self._encrypted.delete()
@@ -91,11 +94,13 @@ class EC2Cryptomatic(object):
             :param original_device: device where take additionnal informations
         """
 
-        self._logger.info('->Creating an encrypted volume from %s' % snapshot.id)
+        self._logger.info(
+            '->Creating an encrypted volume from %s' %
+            snapshot.id)
         volume = self._ec2_resource.create_volume(
-                            SnapshotId=snapshot.id,
-                            VolumeType=original_device.volume_type,
-                            AvailabilityZone=original_device.availability_zone)
+            SnapshotId=snapshot.id,
+            VolumeType=original_device.volume_type,
+            AvailabilityZone=original_device.availability_zone)
         self._wait_volume.wait(VolumeIds=[volume.id])
 
         if original_device.tags:
@@ -108,11 +113,29 @@ class EC2Cryptomatic(object):
             :param snapshot: snapshot to copy
         """
 
-        self._logger.info('->Copy the snapshot %s and encrypt it' % snapshot.id)
-        snap_id = snapshot.copy(Description='encrypted copy of %s' % snapshot.id,
-                                Encrypted=True, SourceRegion=self._region, KmsKeyId=self._kms_key)
+        self._logger.info(
+            '->Copy the snapshot %s and encrypt it' %
+            snapshot.id)
+        snap_id = snapshot.copy(
+            Description='encrypted copy of %s' %
+            snapshot.id,
+            Encrypted=True,
+            SourceRegion=self._region,
+            KmsKeyId=self._kms_key)
         snapshot = self._ec2_resource.Snapshot(snap_id['SnapshotId'])
-        self._wait_snapshot.wait(SnapshotIds=[snapshot.id])
+        self._logger.info(
+            '->Snapshot creation started for snapshot %s' %
+            snapshot.id)
+        snapshot.load()
+        while snapshot.state != 'completed':
+            self._logger.info(
+                "-- Snapshot progress: {}, next info in {} seconds".format(
+                    snapshot.progress,
+                    self._SLEEP_DURATION))
+            time.sleep(self._SLEEP_DURATION)
+            snapshot.load()
+        else:
+            self._logger.info("-> Snapshot {} READY!".format(snapshot.id))
         return snapshot
 
     def _swap_device(self, old_volume, new_volume):
@@ -134,10 +157,22 @@ class EC2Cryptomatic(object):
 
         self._logger.info('->Take a first snapshot for volume %s' % device.id)
         snapshot = device.create_snapshot(Description='snap of %s' % device.id)
-        self._wait_snapshot.wait(SnapshotIds=[snapshot.id])
+        self._logger.info(
+            '->Snapshot creation started for snapshot %s' %
+            snapshot.id)
+        snapshot.load()
+        while snapshot.state != 'completed':
+            self._logger.info(
+                "-- Snapshot progress: {}, next info in {} seconds".format(
+                    snapshot.progress,
+                    self._SLEEP_DURATION))
+            time.sleep(self._SLEEP_DURATION)
+            snapshot.load()
+        else:
+            self._logger.info("-> Snapshot {} READY!".format(snapshot.id))
         return snapshot
 
-    def start_encryption(self, discard_source):
+    def start_encryption(self, discard_source, no_start_instance):
         """ Launch encryption process """
 
         self._logger.info('Start to encrypt instance %s' % self._instance.id)
@@ -163,7 +198,7 @@ class EC2Cryptomatic(object):
             # Keep in mind if DeleteOnTermination is need
             delete_flag = device.attachments[0]['DeleteOnTermination']
             flag_on = {'DeviceName': device.attachments[0]['Device'],
-                       'Ebs': {'DeleteOnTermination':  delete_flag}}
+                       'Ebs': {'DeleteOnTermination': delete_flag}}
 
             # First we have to take a snapshot from the original device
             self._snapshot = self._take_snapshot(device)
@@ -176,7 +211,7 @@ class EC2Cryptomatic(object):
             # It's time to tidy up !
             self._cleanup(device, discard_source)
             # starting the stopped instance
-             
+
             if not discard_source:
                 self._logger.info('>Tagging legacy volume %s with replacement '
                                   'id %s' % (device.id, self._volume.id))
@@ -192,7 +227,8 @@ class EC2Cryptomatic(object):
             if delete_flag:
                 self._logger.info('->Put flag DeleteOnTermination on volume')
                 self._instance.modify_attribute(BlockDeviceMappings=[flag_on])
-        self._start_instance()
+        if not no_start_instance:
+            self._start_instance()
         self._logger.info('End of work on instance %s\n' % self._instance.id)
 
 
@@ -201,7 +237,11 @@ def main(arguments):
 
     for instance in arguments.instances:
         try:
-            EC2Cryptomatic(arguments.region, instance, arguments.key).start_encryption(arguments.discard_source)
+            EC2Cryptomatic(arguments.region,
+                           instance,
+                           arguments.key).start_encryption(
+                arguments.discard_source,
+                arguments.no_start_instance)
 
         except (EndpointConnectionError, ValueError) as error:
             logger.error('Problem with your AWS region ? (%s)' % error)
@@ -218,8 +258,22 @@ if __name__ == '__main__':
     parser.add_argument('-r', '--region', help='AWS Region', required=True)
     parser.add_argument('-i', '--instances', nargs='+',
                         help='Instance to encrypt', required=True)
-    parser.add_argument('-k', '--key', help="KMS Key ID. For alias, add prefix 'alias/'", default='alias/aws/ebs')
-    parser.add_argument('-ds', '--discard_source', action='store_true', default=False,
-                        help='Discard source volume after encryption (default: False)')
+    parser.add_argument(
+        '-k',
+        '--key',
+        help="KMS Key ID. For alias, add prefix 'alias/'",
+        default='alias/aws/ebs')
+    parser.add_argument(
+        '-ns',
+        '--no_start_instance',
+        action='store_true',
+        default=False,
+        help='Do not start the instance when encryption is done (default: False, meaning it starts the instance)')
+    parser.add_argument(
+        '-ds',
+        '--discard_source',
+        action='store_true',
+        default=False,
+        help='Discard source volume after encryption (default: False)')
     args = parser.parse_args()
     main(args)
