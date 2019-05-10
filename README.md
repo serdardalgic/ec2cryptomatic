@@ -1,8 +1,10 @@
 # EC2Cryptomatic
 
-Encrypt EBS volumes from AWS EC2 instances
+**Serdar: I've updated and added some functionalities to the origin repo, that's
+why I've removed links regarding serverless version of this code and the docker
+run instructions. For more details, please visit jbrt's version**
 
-**A serverless version of this script exists here:** https://github.com/jbrt/ec2cryptomatic-serverless
+Encrypt EBS volumes from AWS EC2 instances
 
 ## Description
 
@@ -67,7 +69,8 @@ Here is the syntax of ec2cryptomatic. You have to specify a AWS region name
 and one or more instance ID.
 
 ```
-usage: ec2cryptomatic.py [-h] -r REGION -i INSTANCES [INSTANCES ...] [-k KMS-KEY] [-ds]
+usage: ec2cryptomatic.py [-h] -r REGION -i INSTANCES [INSTANCES ...] [-k KEY]
+                         [-ns] [-ds]
 
 EC2Cryptomatic - Encrypt EBS volumes from EC2 instances
 
@@ -77,8 +80,10 @@ optional arguments:
                         AWS Region
   -i INSTANCES [INSTANCES ...], --instances INSTANCES [INSTANCES ...]
                         Instance to encrypt
-  -k KEY, --kms-key KEY 
-                        KMS Key to be used for encryption
+  -k KEY, --key KEY     KMS Key ID. For alias, add prefix 'alias/'
+  -ns, --dont_start_instance
+                        Do not start the instance when encryption is done
+                        (default: False, meaning it starts the instance)
   -ds, --discard_source
                         Discard source volume after encryption (default:
                         False)
@@ -86,14 +91,10 @@ optional arguments:
 
 ## Docker
 
-You can build a Docker image of that tool with the Dockerfile provided in 
+You can build a Docker image of that tool with the Dockerfile provided in
 this repository :
 
 `docker build -t ec2cryptomatic:latest .`
-
-Or you can use the image already pulled into the official Docker Hub:
-
-`docker pull jbrt/ec2cryptomatic`
 
 ## Example
 
