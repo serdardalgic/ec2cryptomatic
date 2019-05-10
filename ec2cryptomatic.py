@@ -172,7 +172,7 @@ class EC2Cryptomatic(object):
             self._logger.info("-> Snapshot {} READY!".format(snapshot.id))
         return snapshot
 
-    def start_encryption(self, discard_source, no_start_instance):
+    def start_encryption(self, discard_source, dont_start_instance):
         """ Launch encryption process """
 
         self._logger.info('Start to encrypt instance %s' % self._instance.id)
@@ -227,7 +227,7 @@ class EC2Cryptomatic(object):
             if delete_flag:
                 self._logger.info('->Put flag DeleteOnTermination on volume')
                 self._instance.modify_attribute(BlockDeviceMappings=[flag_on])
-        if not no_start_instance:
+        if not dont_start_instance:
             self._start_instance()
         self._logger.info('End of work on instance %s\n' % self._instance.id)
 
@@ -241,7 +241,7 @@ def main(arguments):
                            instance,
                            arguments.key).start_encryption(
                 arguments.discard_source,
-                arguments.no_start_instance)
+                arguments.dont_start_instance)
 
         except (EndpointConnectionError, ValueError) as error:
             logger.error('Problem with your AWS region ? (%s)' % error)
@@ -265,7 +265,7 @@ if __name__ == '__main__':
         default='alias/aws/ebs')
     parser.add_argument(
         '-ns',
-        '--no_start_instance',
+        '--dont_start_instance',
         action='store_true',
         default=False,
         help='Do not start the instance when encryption is done (default: False, meaning it starts the instance)')
